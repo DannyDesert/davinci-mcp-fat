@@ -1,154 +1,179 @@
-// davinci-mcp-fat — Workflow Integration plugin
-// Runs inside Resolve, exposes a WebSocket the MCP server talks to.
+// davinci-mcp-fat — Workflow Integration plugin Electron main process.
+//
+// Hosts a tiny HTTP server on 127.0.0.1:9087. The MCP server speaks to it
+// via plain HTTP/JSON. We don't ship ws or any node_modules — only Node's
+// stdlib + WorkflowIntegration.node (BMD's native binding).
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('path');
+const http = require('http');
+const WorkflowIntegration = require('./WorkflowIntegration.node');
 
-const PORT = 9087;
-const VERSION = "0.1.0";
+const PLUGIN_ID = 'com.dannydesert.davinci-mcp-fat';
+const PLUGIN_VERSION = '0.1.0';
+const HTTP_PORT = Number(process.env.DAVINCI_MCP_FAT_PORT || 9087);
 
-function log(msg, cls = "") {
-  const el = document.getElementById("log");
-  if (!el) return;
-  const line = document.createElement("div");
-  line.className = "line " + cls;
-  const ts = new Date().toTimeString().slice(0, 8);
-  line.textContent = `[${ts}] ${msg}`;
-  el.appendChild(line);
-  el.scrollTop = el.scrollHeight;
+let mainWindow = null;
+let resolveObj = null;
+let httpServer = null;
+const status = { resolveBound: false, httpListening: false, lastRequestAt: null };
+
+// ─── Resolve bridge ─────────────────────────────────────────────────
+async function getResolve() {
+    if (resolveObj) return resolveObj;
+    const ok = await WorkflowIntegration.Initialize(PLUGIN_ID);
+    if (!ok) return null;
+    resolveObj = await WorkflowIntegration.GetResolve();
+    status.resolveBound = Boolean(resolveObj);
+    pushStatus();
+    return resolveObj;
 }
 
-function setStatus(id, text, ok) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = text;
-  el.className = "val " + (ok === true ? "ok" : ok === false ? "err" : "");
-}
-
-// Resolve injects `WorkflowIntegration` (legacy) and / or `bmd` globals.
-// The actual scripting API surface lives behind `app` or a fetch helper.
-// We try common ones.
-function getResolve() {
-  if (typeof bmd !== "undefined" && bmd && bmd.scriptapp) {
-    return bmd.scriptapp("Resolve");
-  }
-  if (typeof WorkflowIntegration !== "undefined" && WorkflowIntegration && WorkflowIntegration.GetResolve) {
-    return WorkflowIntegration.GetResolve();
-  }
-  return null;
-}
-
-const resolve = getResolve();
-if (resolve) {
-  setStatus("api", "✓ connected", true);
-  log("Resolve API bound");
-} else {
-  setStatus("api", "not found", false);
-  log("Resolve API global not found (running outside Resolve?)", "err");
+async function cleanupResolve() {
+    try { WorkflowIntegration.CleanUp(); } catch (_) {}
+    resolveObj = null;
+    status.resolveBound = false;
 }
 
 // ─── Command dispatch ──────────────────────────────────────────────
-// Each command receives (params) → returns plain JSON. Errors throw.
 const commands = {
-  ping: async () => ({ pong: true, version: VERSION, ts: Date.now() }),
+    ping: async () => ({ pong: true, version: PLUGIN_VERSION, ts: Date.now() }),
 
-  get_resolve_info: async () => {
-    if (!resolve) throw new Error("Resolve API unavailable");
-    return {
-      product_name: resolve.GetProductName?.() ?? null,
-      version: resolve.GetVersionString?.() ?? null,
-      current_page: resolve.GetCurrentPage?.() ?? null,
-    };
-  },
+    resolve_info: async () => {
+        const r = await getResolve();
+        if (!r) throw new Error('resolve unavailable');
+        return {
+            product_name: await r.GetProductName(),
+            version: await r.GetVersionString(),
+            current_page: await r.GetCurrentPage(),
+        };
+    },
 
-  get_timeline_info: async () => {
-    if (!resolve) throw new Error("Resolve API unavailable");
-    const pm = resolve.GetProjectManager?.();
-    const project = pm?.GetCurrentProject?.();
-    const tl = project?.GetCurrentTimeline?.();
-    if (!tl) return { timeline: null };
-    return {
-      name: tl.GetName?.(),
-      start_frame: tl.GetStartFrame?.(),
-      end_frame: tl.GetEndFrame?.(),
-      v_tracks: tl.GetTrackCount?.("video"),
-      a_tracks: tl.GetTrackCount?.("audio"),
-    };
-  },
+    timeline_info: async () => {
+        const r = await getResolve();
+        if (!r) throw new Error('resolve unavailable');
+        const pm = await r.GetProjectManager();
+        const proj = pm ? await pm.GetCurrentProject() : null;
+        const tl = proj ? await proj.GetCurrentTimeline() : null;
+        if (!tl) return { timeline: null };
+        return {
+            name: await tl.GetName(),
+            start_frame: await tl.GetStartFrame(),
+            end_frame: await tl.GetEndFrame(),
+            v_tracks: await tl.GetTrackCount('video'),
+            a_tracks: await tl.GetTrackCount('audio'),
+        };
+    },
 
-  // === Things the standalone API can't do — phase 1 stubs ===
-  set_clip_volume_db: async (_params) => {
-    // params: { track_index, item_index, db }
-    // TODO: reach into Resolve's Inspector surface; the in-process WI plugin
-    // can access properties the external scripting API hides.
-    throw new Error("not_implemented: set_clip_volume_db (phase 1)");
-  },
-
-  add_video_transition: async (_params) => {
-    // params: { track_index, item_index, transition_name, duration_frames, alignment }
-    // TODO: dispatch to AppleScript bridge for UI-only operation.
-    throw new Error("not_implemented: add_video_transition (phase 1)");
-  },
+    // Phase 2 stubs — proving the gap-closing surface compiles.
+    set_clip_volume_db: async (_params) => {
+        throw new Error('not_implemented: set_clip_volume_db (phase 2)');
+    },
+    add_video_transition: async (_params) => {
+        throw new Error('not_implemented: add_video_transition (phase 3)');
+    },
 };
 
-// ─── WebSocket server ──────────────────────────────────────────────
-// In a browser context we cannot create a TCP server; we open a WS client
-// to the MCP server's bridge port instead. The MCP server runs a tiny WS
-// hub that any side can dial.
-let ws = null;
-let retryTimer = null;
-
-function connect() {
-  setStatus("ws", `dial ws://127.0.0.1:${PORT}/plugin`);
-  try {
-    ws = new WebSocket(`ws://127.0.0.1:${PORT}/plugin`);
-  } catch (e) {
-    log("ws construct failed: " + e.message, "err");
-    schedule();
-    return;
-  }
-  ws.onopen = () => {
-    setStatus("ws", `connected :${PORT}`, true);
-    log("ws open");
-    ws.send(JSON.stringify({ type: "hello", role: "plugin", version: VERSION }));
-  };
-  ws.onclose = () => {
-    setStatus("ws", "disconnected", false);
-    setStatus("mcp", "waiting", null);
-    log("ws closed");
-    schedule();
-  };
-  ws.onerror = (e) => log("ws error", "err");
-  ws.onmessage = async (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type === "mcp_connected") {
-      setStatus("mcp", "✓ connected", true);
-      log("mcp client connected via bridge");
-      return;
-    }
-    if (msg.type === "mcp_disconnected") {
-      setStatus("mcp", "waiting", null);
-      log("mcp client disconnected");
-      return;
-    }
-    if (msg.type === "request") {
-      const { id, command, params } = msg;
-      const fn = commands[command];
-      if (!fn) {
-        ws.send(JSON.stringify({ type: "response", id, ok: false, error: "unknown command: " + command }));
-        return;
-      }
-      try {
-        const result = await fn(params || {});
-        ws.send(JSON.stringify({ type: "response", id, ok: true, result }));
-      } catch (e) {
-        ws.send(JSON.stringify({ type: "response", id, ok: false, error: String(e.message || e) }));
-      }
-    }
-  };
+// ─── HTTP server ────────────────────────────────────────────────────
+function readBody(req) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on('data', (c) => chunks.push(c));
+        req.on('end', () => {
+            try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
+            catch (e) { reject(e); }
+        });
+        req.on('error', reject);
+    });
 }
 
-function schedule() {
-  if (retryTimer) clearTimeout(retryTimer);
-  retryTimer = setTimeout(connect, 2500);
+function startHttp() {
+    httpServer = http.createServer(async (req, res) => {
+        // simple CORS for localhost MCP clients
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+
+        if (req.method === 'GET' && req.url === '/status') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+                plugin_id: PLUGIN_ID, version: PLUGIN_VERSION,
+                resolve_bound: status.resolveBound,
+                last_request_at: status.lastRequestAt,
+                commands: Object.keys(commands),
+            }));
+        }
+
+        if (req.method === 'POST' && req.url === '/command') {
+            status.lastRequestAt = Date.now();
+            pushStatus();
+            try {
+                const body = await readBody(req);
+                const fn = commands[body.command];
+                if (!fn) {
+                    res.writeHead(404, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'unknown command: ' + body.command }));
+                }
+                const result = await fn(body.params || {});
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: true, result }));
+            } catch (e) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+            }
+        }
+
+        res.writeHead(404); res.end();
+    });
+    httpServer.on('error', (e) => { console.error('http server error', e); });
+    httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
+        status.httpListening = true;
+        pushStatus();
+        console.log(`[davinci-mcp-fat] http listening on 127.0.0.1:${HTTP_PORT}`);
+    });
 }
 
-connect();
+// ─── Renderer status push ──────────────────────────────────────────
+function pushStatus() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('status', {
+            plugin_id: PLUGIN_ID,
+            version: PLUGIN_VERSION,
+            http_port: HTTP_PORT,
+            ...status,
+        });
+    }
+}
+
+ipcMain.handle('status:get', () => ({
+    plugin_id: PLUGIN_ID, version: PLUGIN_VERSION, http_port: HTTP_PORT, ...status,
+}));
+
+// ─── Lifecycle ──────────────────────────────────────────────────────
+function createWindow() {
+    mainWindow = new BrowserWindow({
+        width: 520,
+        height: 380,
+        useContentSize: true,
+        webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    });
+    mainWindow.loadFile('index.html');
+    mainWindow.on('close', () => app.quit());
+}
+
+app.whenReady().then(async () => {
+    createWindow();
+    startHttp();
+    // Initialize Resolve binding lazily on first command, but try once at boot.
+    try { await getResolve(); } catch (_) {}
+});
+
+app.on('window-all-closed', async () => {
+    if (httpServer) httpServer.close();
+    await cleanupResolve();
+    if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});

@@ -1,18 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<PluginConfig>
-  <PluginName>davinci-mcp-fat</PluginName>
-  <PluginIdentifier>com.dannydesert.davinci-mcp-fat</PluginIdentifier>
-  <Version>0.1.0</Version>
-  <PluginMainPath>main.html</PluginMainPath>
-  <PluginAuthor>Danny Desert</PluginAuthor>
-  <PluginAuthorURL>https://github.com/DannyDesert/davinci-mcp-fat</PluginAuthorURL>
-  <PluginAuthorEmail>noreply@github.com</PluginAuthorEmail>
-  <PluginCopyright>Copyright (c) 2026 Danny Desert. MIT Licensed.</PluginCopyright>
-  <Description>Bridges DaVinci Resolve to MCP clients via WebSocket, unlocking per-clip volume, opacity keyframes, transitions, and template aesthetics that the standalone scripting API blocks.</Description>
-  <Resolutions>
-    <Resolution>
-      <Width>520</Width>
-      <Height>380</Height>
-    </Resolution>
-  </Resolutions>
-</PluginConfig>
+<BlackmagicDesign>
+    <Plugin>
+        <Id>com.dannydesert.davinci-mcp-fat</Id>
+        <Name>davinci-mcp-fat</Name>
+        <Version>0.1.0</Version>
+        <Description>Bridges DaVinci Resolve to MCP clients via HTTP, exposing per-clip volume, opacity keyframes, transitions, and template aesthetics that the standalone scripting API blocks.</Description>
+        <FilePath>main.js</FilePath>
+    </Plugin>
+</BlackmagicDesign>

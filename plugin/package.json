@@ -1,0 +1,10 @@
+{
+    "name": "davinci-mcp-fat",
+    "version": "0.1.0",
+    "description": "Workflow Integration plugin half of davinci-mcp-fat — exposes an HTTP server inside Resolve that the MCP server calls into.",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron ."
+    },
+    "license": "MIT"
+}
