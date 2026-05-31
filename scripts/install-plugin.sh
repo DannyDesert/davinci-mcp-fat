@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Symlinks the plugin/ folder of this repo into Resolve's Workflow Integration
-# Plugins directory so iterating on plugin code doesn't require copying files.
+# Installs the plugin/ folder of this repo into Resolve's Workflow Integration
+# Plugins directory. Requires sudo on macOS because the dir lives under /Library.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,37 +9,43 @@ PLUGIN_NAME="davinci-mcp-fat"
 
 case "$(uname -s)" in
   Darwin)
-    DEST_ROOT="$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins"
+    # System-wide path. Resolve does NOT read user-Library ~/Library — confirmed.
+    DEST_ROOT="/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins"
+    SUDO="sudo"
     ;;
   Linux)
-    DEST_ROOT="$HOME/.local/share/DaVinciResolve/Workflow Integration Plugins"
+    # Linux Resolve uses a per-user path; sudo not required.
+    DEST_ROOT="$HOME/.local/share/DaVinciResolve/Fusion/Workflow Integration Plugins"
+    SUDO=""
     ;;
   *)
     echo "Unsupported OS. On Windows, copy plugin/ to:"
-    echo "  %APPDATA%\\Blackmagic Design\\DaVinci Resolve\\Support\\Workflow Integration Plugins\\$PLUGIN_NAME"
+    echo "  %PROGRAMDATA%\\Blackmagic Design\\DaVinci Resolve\\Support\\Workflow Integration Plugins\\$PLUGIN_NAME"
     exit 1
     ;;
 esac
 
 DEST="$DEST_ROOT/$PLUGIN_NAME"
-mkdir -p "$DEST_ROOT"
 
-if [ -L "$DEST" ]; then
-  echo "Removing existing symlink: $DEST"
-  rm "$DEST"
-elif [ -e "$DEST" ]; then
-  echo "ERROR: $DEST exists and is not a symlink. Refusing to overwrite."
-  echo "Move or delete it manually, then re-run."
-  exit 1
+echo "Installing plugin"
+echo "  src: $PLUGIN_SRC"
+echo "  dst: $DEST"
+echo ""
+
+$SUDO mkdir -p "$DEST_ROOT"
+
+if [ -e "$DEST" ] || [ -L "$DEST" ]; then
+  echo "Removing existing install at $DEST"
+  $SUDO rm -rf "$DEST"
 fi
 
-ln -s "$PLUGIN_SRC" "$DEST"
-echo "✓ symlinked"
-echo "    $PLUGIN_SRC"
-echo "  → $DEST"
+$SUDO cp -R "$PLUGIN_SRC" "$DEST"
+echo "✓ installed"
 echo ""
-echo "Next steps:"
-echo "  1. Quit and reopen DaVinci Resolve"
-echo "  2. In Resolve: Workspace → Workflow Integrations → davinci-mcp-fat"
-echo "  3. A floating panel will open. The 'WebSocket server' row should say 'connected :9087'"
-echo "     once you start the MCP server (npm run start --prefix mcp-server)."
+echo "Next:"
+echo "  1. Resolve Preferences (⌘,) → System → General →"
+echo "     set 'External scripting using' to Local, click Save."
+echo "  2. ⌘Q to quit Resolve fully, then reopen."
+echo "  3. Workspace → Workflow Integrations → davinci-mcp-fat"
+echo ""
+echo "  npm run start --prefix mcp-server   # starts the WS bridge"

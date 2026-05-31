@@ -59,10 +59,14 @@ The WI plugin gets us in-process access (clip volume, opacity keyframes, inspect
 ```bash
 git clone git@github.com:DannyDesert/davinci-mcp-fat.git
 cd davinci-mcp-fat
-./scripts/install-plugin.sh   # symlinks plugin/ into Resolve's plugin dir
+./scripts/install-plugin.sh   # copies plugin/ into Resolve's plugin dir (needs sudo on macOS)
 npm install --prefix mcp-server
 npm run build --prefix mcp-server
 ```
+
+Plugin install path on macOS is **system-wide** (`/Library/...`, not `~/Library/...`).
+Resolve does not scan the user-library path — verified empirically against
+Resolve Studio 20.3.
 
 Then launch Resolve and enable: **Workspace → Workflow Integrations → davinci-mcp-fat**.
 
