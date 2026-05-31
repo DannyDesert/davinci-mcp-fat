@@ -1,41 +1,40 @@
 # Phase plan
 
-## Phase 1 — Scaffold (this commit)
+## ✅ Phase 1 — Scaffold (shipped v0.1.0, May 31 2026)
 
-- [x] WI plugin manifest + main.html + main.js with status panel
-- [x] WS bridge between plugin and MCP server (auto-reconnect)
-- [x] MCP server (TS) with tool catalog skeleton
-- [x] `bridge_status`, `ping`, `resolve_info`, `timeline_info` tools
-- [x] `install-plugin.sh` symlink script
-- [x] README, LICENSE, .gitignore
-- [ ] Verify plugin loads in real Resolve session
-- [ ] Verify MCP↔plugin round trip works end-to-end
+- [x] WI plugin manifest + Electron main.js + preload.js + index.html
+- [x] Correct `<BlackmagicDesign><Plugin>` manifest schema
+- [x] WorkflowIntegration.node native binding wired
+- [x] HTTP server on 127.0.0.1:9087 (Node stdlib, zero runtime deps)
+- [x] MCP server (TS) with HTTP bridge to plugin
+- [x] Tools: `bridge_status`, `ping`, `resolve_info`, `timeline_info`
+- [x] Plugin stays alive when window closes (hide-not-quit)
+- [x] EADDRINUSE retry + status polling fallback
+- [x] `install-plugin.sh` at the correct system-wide `/Library/...` path
+- [x] **Verified end-to-end:** Claude MCP → TS server → HTTP → plugin → Resolve
 
-## Phase 2 — Gap-closing features
+## 🚧 Phase 2 — Gap-closing features
 
-Things the standalone BMD API blocks that the in-process plugin can do:
+Things the standalone BMD scripting API blocks that the in-process plugin can do via the inspector / clip property surface:
 
-- [ ] `set_clip_volume_db(track_index, item_index, db)` — via plugin's access to Resolve's audio inspector
+- [ ] `set_clip_volume_db(track_index, item_index, db)`
 - [ ] `set_clip_pan(...)`
 - [ ] `set_clip_opacity_keyframes([{frame, opacity}])` — enables faux fade-transitions without UI
+- [ ] `set_inspector_field(field, value)`
 - [ ] `subscribe_timeline_events()` — push events to MCP clients on playhead/selection/timeline change
 
-## Phase 3 — AppleScript / accessibility bridge (macOS-only)
+## 🚧 Phase 3 — AppleScript bridge (macOS-only)
 
 Things even the in-process plugin can't do — UI gestures:
 
-- [ ] `add_video_transition(track, item, name, duration, alignment)` — drives Effects panel drag → cut point
-- [ ] `apply_title_template_to_v2(template_name, frame_position, duration, text)` — drag from Effects panel onto V2
-- [ ] `set_inspector_field(field_name, value)` — for inspector fields not exposed in scripting
+- [ ] `add_video_transition(track, item, name, duration, alignment)` — drag Effects panel → cut point
+- [ ] `apply_title_template_to_v2(template, frame, duration, text)` — drag template onto V2
 - [ ] `keyboard_shortcut(combo)` — generic UI driver
 
-The AppleScript bridge runs as a child process spawned by the MCP server; it
-returns OK/error and the MCP server reports success to the client.
+## 🚧 Phase 4 — Polish & ship
 
-## Phase 4 — Polish & ship
-
-- [ ] Brew formula / npm install one-liner
 - [ ] Demo video (record a Claude session driving Resolve end-to-end)
 - [ ] CI: lint TS, smoke-test plugin file structure
-- [ ] License headers, contributor guide
-- [ ] Initial release tag v0.2.0
+- [ ] Brew formula / npm install one-liner
+- [ ] Docs site
+- [ ] v0.2.0 release with the first phase-2 feature
