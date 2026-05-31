@@ -29,12 +29,13 @@
     <div class="row"><span class="label">HTTP server</span><span id="http" class="val">…</span></div>
     <div class="row"><span class="label">Last request from MCP</span><span id="req" class="val">none yet</span></div>
     <div class="hint">
-      Run the MCP server: <code>npm run start --prefix mcp-server</code><br>
-      Test from terminal: <code>curl -X POST localhost:9087/command -d '{"command":"ping"}'</code>
+      MCP server: <code>npm run start --prefix mcp-server</code><br>
+      Smoke test: <code>curl -X POST localhost:9087/command -d '{"command":"ping"}'</code>
     </div>
   </div>
   <script>
     function paint(s) {
+      if (!s) return;
       document.getElementById('ver').textContent = 'v' + s.version + ' · port ' + s.http_port;
       const r = document.getElementById('resolve');
       r.textContent = s.resolve_bound ? '✓ connected' : '✗ not bound';
@@ -45,8 +46,11 @@
       document.getElementById('req').textContent =
         s.last_request_at ? new Date(s.last_request_at).toLocaleTimeString() : 'none yet';
     }
+    // initial + push from main
     window.fat.getStatus().then(paint);
     window.fat.onStatus(paint);
+    // poll fallback in case the push IPC misses while renderer was loading
+    setInterval(() => window.fat.getStatus().then(paint).catch(() => {}), 1000);
   </script>
 </body>
 </html>

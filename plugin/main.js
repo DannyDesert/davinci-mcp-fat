@@ -87,6 +87,7 @@ function readBody(req) {
 }
 
 function startHttp() {
+    if (httpServer) { try { httpServer.close(); } catch (_) {} }
     httpServer = http.createServer(async (req, res) => {
         // simple CORS for localhost MCP clients
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -125,9 +126,17 @@ function startHttp() {
 
         res.writeHead(404); res.end();
     });
-    httpServer.on('error', (e) => { console.error('http server error', e); });
+    httpServer.on('error', (e) => {
+        status.httpListening = false;
+        status.httpError = String(e && e.message ? e.message : e);
+        pushStatus();
+        console.error('http server error', e);
+        // Retry in 3s if it was an EADDRINUSE (likely TIME_WAIT from a prior instance)
+        if (e && e.code === 'EADDRINUSE') setTimeout(() => startHttp(), 3000);
+    });
     httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
         status.httpListening = true;
+        status.httpError = null;
         pushStatus();
         console.log(`[davinci-mcp-fat] http listening on 127.0.0.1:${HTTP_PORT}`);
     });
@@ -150,6 +159,7 @@ ipcMain.handle('status:get', () => ({
 }));
 
 // ─── Lifecycle ──────────────────────────────────────────────────────
+let isQuitting = false;
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 520,
@@ -158,8 +168,17 @@ function createWindow() {
         webPreferences: { preload: path.join(__dirname, 'preload.js') },
     });
     mainWindow.loadFile('index.html');
-    mainWindow.on('close', () => app.quit());
+    // Closing the window keeps the plugin alive (HTTP server stays up).
+    // Reopen via Workspace → Workflow Integrations → davinci-mcp-fat.
+    // Real quit happens on Cmd+Q (app.before-quit fires isQuitting).
+    mainWindow.on('close', (e) => {
+        if (!isQuitting) {
+            e.preventDefault();
+            mainWindow.hide();
+        }
+    });
 }
+app.on('before-quit', () => { isQuitting = true; });
 
 app.whenReady().then(async () => {
     createWindow();
@@ -168,12 +187,15 @@ app.whenReady().then(async () => {
     try { await getResolve(); } catch (_) {}
 });
 
-app.on('window-all-closed', async () => {
+// Don't quit on window-all-closed (the close handler above prevents real close).
+// The plugin stays alive serving HTTP until Resolve itself shuts down or the
+// user explicitly quits via Cmd+Q in the plugin window.
+app.on('before-quit', async () => {
     if (httpServer) httpServer.close();
     await cleanupResolve();
-    if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (mainWindow) mainWindow.show();
+    else createWindow();
 });
